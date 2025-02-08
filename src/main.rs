@@ -15,6 +15,10 @@ const TEXTURE_ARENA: &str = "sprites/arena.png";
 const TEXTURE_PLAYER: &str = "sprites/player.png";
 const TEXTURE_SLIME: &str = "sprites/slime.png";
 
+const SPEED_PLAYER: f32 = 100.0;
+const SPEED_SLIME: f32 = 50.0;
+const SPEED_BULLET: f32 = 200.0;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest())) // prevents blurry sprites
@@ -111,7 +115,7 @@ fn execute_player_movement(
         };
     }
     
-    transform.translation += move_direction * time.delta_secs() * 500.0;
+    transform.translation += move_direction * time.delta_secs() * SPEED_PLAYER;
 
     if transform.translation.x < -2170.0 {
         transform.translation.x = -2170.0;
@@ -141,12 +145,15 @@ fn scroll_events(
         match ev.unit {
             MouseScrollUnit::Line => {
                 let (_, mut camera_transform) = camera_query.single_mut();
-                let factor = ev.y * -0.1;
-                if !(factor < 0.0 && camera_transform.scale.x <= 1.0) {
-                    camera_transform.scale.x += factor;
-                    camera_transform.scale.y += factor;
-                    camera_transform.scale.z += factor;
-                }
+                let factor = ev.y * -0.02;
+                let current_scale = camera_transform.scale.x;
+                    let mut new_scale = ((current_scale + factor) * 100.0).floor() / 100.0;
+                    if new_scale < 0.12 {
+                        new_scale = 0.12;
+                    }
+                    camera_transform.scale = Vec3::new(new_scale, new_scale, new_scale);
+
+                println!("{:?}", camera_transform.scale);
             }
             MouseScrollUnit::Pixel => (),
         }
@@ -164,13 +171,13 @@ fn execute_bullets_move(
         if bullet_info.elapsed.just_finished() {
             commands.entity(bullet_entity).despawn();
         } else {
-            bullet_transform.translation += bullet_info.direction * time.delta_secs() * 1000.0;
+            bullet_transform.translation += bullet_info.direction * time.delta_secs() * SPEED_BULLET;
 
             for (enemy_entity, enemy_transform, _) in &enemy_query {
-                if bullet_transform.translation.x >= enemy_transform.translation.x - 45.0 && 
-                    bullet_transform.translation.x <= enemy_transform.translation.x + 45.0  && 
-                    bullet_transform.translation.y >= enemy_transform.translation.y - 45.0 && 
-                    bullet_transform.translation.y <= enemy_transform.translation.y + 45.0  {
+                if bullet_transform.translation.x >= enemy_transform.translation.x - 12.0 && 
+                    bullet_transform.translation.x <= enemy_transform.translation.x + 12.0  && 
+                    bullet_transform.translation.y >= enemy_transform.translation.y - 12.0 && 
+                    bullet_transform.translation.y <= enemy_transform.translation.y + 12.0  {
                         commands.entity(bullet_entity).despawn();
                         commands.entity(enemy_entity).despawn();
                         break;
@@ -189,8 +196,7 @@ fn execute_enemy_movement(
     
     for (mut enemy_transfrom, _) in &mut enemy_query {
         let move_vector = (player_transform.translation - enemy_transfrom.translation).normalize();
-        //println!("Move vector: {move_vector:?}");
-        enemy_transfrom.translation += move_vector * time.delta_secs() * 300.0;
+        enemy_transfrom.translation += move_vector * time.delta_secs() * SPEED_SLIME;
         enemy_transfrom.translation.z = -(enemy_transfrom.translation.y * 0.01);
     }
 }
@@ -250,7 +256,10 @@ fn setup(
 ) {
     let ball_texture: Handle<Image> = asset_server.load(TEXTURE_BULLET);
 
-    commands.spawn(Camera2d);
+    commands.spawn((
+        Camera2d,
+        Transform::from_scale(Vec3::ONE * 0.2),
+    ));
 
     // Background
     {
@@ -260,7 +269,7 @@ fn setup(
                 image: arena,
                 .. default()
             },
-            Transform::from_scale(Vec3::splat(6.0)).with_translation(Vec3::new(0.0, 0.0, -100.0)),
+            Transform::from_translation(Vec3::new(0.0, 0.0, -100.0)),
         ));
     }
 
@@ -307,7 +316,7 @@ fn setup(
                 }),
                 ..default()
             },
-            Transform::from_scale(Vec3::splat(6.0)).with_translation(Vec3::new(-200.0, 0.0, 0.0)),
+            Transform::from_translation(Vec3::new(-20.0, 0.0, 0.0)),
             PlayerMarker,
             player_animation_config,
         ));
@@ -316,11 +325,11 @@ fn setup(
     // Slime
     commands.insert_resource(EnemySpawnerState {
         locations: vec![
-            Vec3::new(4.0, -90.0, 0.0),
-            Vec3::new(-2065.0, 1790.0, 0.0),
-            Vec3::new(2060.0, 1790.0, 0.0),
-            Vec3::new(2060.0, -2160.0, 0.0),
-            Vec3::new(-2065.0, -2160.0, 0.0),
+            Vec3::new(0.0, -15.0, 0.0),
+            Vec3::new(-345.0, 295.0, 0.0),
+            Vec3::new(345.0, 295.0, 0.0),
+            Vec3::new(-345.0, -360.0, 0.0),
+            Vec3::new(345.0, -360.0, 0.0),
         ],
         timer: Timer::from_seconds(0.3, TimerMode::Repeating)
     });
@@ -385,7 +394,7 @@ fn spawn_enemies(
                 }),
                 ..default()
             },
-            Transform::from_scale(Vec3::splat(6.0)).with_translation(enemy_spawner_state.locations[location_index]),
+            Transform::from_translation(enemy_spawner_state.locations[location_index]),
             EnemyMarker,
             slime_animation_config,
         ));
