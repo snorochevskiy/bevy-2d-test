@@ -1,0 +1,10 @@
+[package]
+name = "bevy-2d-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { version = "0.15.1", features = []}
+bevy_math = { version = "0.15.1", features = []}
+bevy_framepace = "0.18.0"
+rand = "0.8"
