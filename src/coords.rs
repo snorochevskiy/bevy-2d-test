@@ -1,6 +1,7 @@
 use bevy::{render::camera::Camera, transform::components::GlobalTransform};
 use bevy_math::{primitives::InfinitePlane3d, Dir3, Vec2, Vec3};
 
+/// Calculates in game world coordinates, for given mouse cursor position.
 pub fn calc_mouse_world_coord(
     cursor_position: Vec2,
     camera: &Camera,

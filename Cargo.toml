@@ -7,4 +7,5 @@ edition = "2021"
 bevy = { version = "0.15.1", features = []}
 bevy_math = { version = "0.15.1", features = []}
 bevy_framepace = "0.18.0"
+bevy_rapier2d = { version = "0.28.0", features = [ "simd-stable", "debug-render-3d" ] }
 rand = "0.8"
