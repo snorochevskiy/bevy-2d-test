@@ -2,6 +2,8 @@
 
 A simple 2D game made in Bevy.
 
+![screenshot](game.jpeg)
+
 ## Build and run
 
 Make sure you have Rust SDK installed: https://www.rust-lang.org/tools/install
