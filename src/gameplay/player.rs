@@ -5,7 +5,7 @@ use bevy_rapier2d::prelude::*;
 
 use crate::{animation::{AnimationByDirection, AnimationConfig}, coords::calc_mouse_world_coord, direction::direction_of_vector};
 
-use super::{enemy::EnemyState, LevelComponents};
+use super::{GRP_ENEMY, GRP_ENVIRONMENT, GRP_PLAYER, GRP_PLAYER_BULLET, CollidingObj, LevelComponents};
 
 const TEXTURE_PLAYER: &str = "sprites/player.png";
 
@@ -24,12 +24,17 @@ pub struct PlayerInfo {
 
 #[derive(Component)]
 pub struct Bullet {
-    direction: Vec3,
     elapsed: Timer,
 }
 
 #[derive(Resource)]
 pub struct BulletSprite(pub Handle<Image>);
+
+#[derive(Event)]
+pub struct PlayerDamage(pub u32);
+
+#[derive(Event)]
+pub struct BulletCollided(pub Entity);
 
 pub fn setup_player(
     mut commands: Commands,
@@ -78,8 +83,13 @@ pub fn setup_player(
             KinematicCharacterController::default(),
             ActiveEvents::COLLISION_EVENTS, // to receive event on colliding with enemy
             LockedAxes::ROTATION_LOCKED,
-            Collider::cuboid(8.0, 12.0),
+            Collider::cuboid(7.0, 12.0),
+            CollisionGroups::new(
+                GRP_PLAYER,
+                GRP_ENVIRONMENT | GRP_ENEMY,
+            ),
             GravityScale(0.0),
+            Dominance::group(100),
             Sprite {
                 image: player_texture.clone(),
                 texture_atlas: Some(TextureAtlas {
@@ -93,6 +103,7 @@ pub fn setup_player(
             player_animation_config,
             Velocity::zero(),
             LevelComponents,
+            CollidingObj::Player,
         ));
     }
 
@@ -111,7 +122,6 @@ pub fn execute_player_behavior(
 ) {
     let (mut animation, mut velocity, mut transform) = player_query.single_mut();
 
-    // TODO: move these key checks to separate system.
     let move_direction =
         if keys.pressed(KeyCode::KeyA) && keys.pressed(KeyCode::KeyS) {
             Vec3::new(-1.0, -1.0, 0.0).normalize()
@@ -148,7 +158,7 @@ pub fn execute_player_behavior(
                 animation.current_frame_range = frames_range;
             }
 
-            if mouse.just_pressed(MouseButton::Right) {
+            if mouse.just_pressed(MouseButton::Middle) {
                 println!("Clicked coordinates: {coord:?}");
             }
 
@@ -160,16 +170,26 @@ pub fn execute_player_behavior(
                     },
                     transform.clone(),
                     Bullet {
-                        direction: player_orientation,
                         elapsed: Timer::new(BULLET_LIFE_TIME, TimerMode::Once),
                     },
+                    RigidBody::Dynamic,
+                    GravityScale(0.0),
+                    LockedAxes::ROTATION_LOCKED,
+                    Collider::ball(2.0),
+                    CollisionGroups::new(
+                        GRP_PLAYER_BULLET,
+                        GRP_ENVIRONMENT | GRP_ENEMY,
+                    ),
+                    ActiveEvents::COLLISION_EVENTS,
+                    Velocity::linear(player_orientation.xy() * SPEED_BULLET),
                     LevelComponents,
+                    CollidingObj::Bullet,
                 ));
             }
         };
     }
 
-    velocity.linvel = (move_direction * SPEED_PLAYER * 2.0).xy();
+    velocity.linvel = (move_direction * SPEED_PLAYER).xy();
 
     transform.translation.z = -(transform.translation.y * 0.01);
 
@@ -177,39 +197,33 @@ pub fn execute_player_behavior(
     camera_transform.translation.y = transform.translation.y;
 }
 
-pub fn execute_bullets_move(
+pub fn execute_bullets_lifetime(
     mut commands: Commands,
     time: Res<Time>,
-    mut bullet_query: Query<(Entity, &mut Transform, &mut Bullet)>,
-    mut enemy_query: Query<(Entity, &mut Transform, &mut Velocity, &mut AnimationConfig, &mut EnemyState), Without<Bullet>>,
+    mut bullet_query: Query<(Entity, &mut Bullet)>,
 ) {
-    for (bullet_entity, mut bullet_transform, mut bullet_info) in &mut bullet_query {
+    for (bullet_entity, mut bullet_info) in &mut bullet_query {
         bullet_info.elapsed.tick(time.delta());
         if bullet_info.elapsed.just_finished() {
             commands.entity(bullet_entity).despawn();
-        } else {
-            bullet_transform.translation += bullet_info.direction * time.delta_secs() * SPEED_BULLET;
-
-            for (enemy_entity, enemy_transform, mut enemy_velocity, mut enemy_anim_config, mut enemy_info) in &mut enemy_query {
-                // Just ot demonstrate that we can detect bullet collion with an enemy just by checking coordinates, without physics
-
-                let enemy_hit =
-                    bullet_transform.translation.x >= enemy_transform.translation.x - 12.0 && 
-                    bullet_transform.translation.x <= enemy_transform.translation.x + 12.0 && 
-                    bullet_transform.translation.y >= enemy_transform.translation.y - 12.0 && 
-                    bullet_transform.translation.y <= enemy_transform.translation.y + 12.0 &&
-                    enemy_info.is_alive();
-
-                if  enemy_hit {
-                        commands.entity(bullet_entity).despawn();
-                        let dying_duration = enemy_anim_config.frame_show_time() * enemy_anim_config.dying.len() as u32;
-                        *enemy_info = EnemyState::Dying(Timer::new(dying_duration, TimerMode::Once));
-                        enemy_anim_config.current_frame_range = enemy_anim_config.dying.clone();
-                        commands.entity(enemy_entity).remove::<Collider>();
-                        enemy_velocity.linvel = Vec2::ZERO;
-                        break;
-                }
-            }
         }
+    }
+}
+
+pub fn on_player_damaged(
+    mut events: EventReader<PlayerDamage>,
+    mut player_query: Single<&mut PlayerInfo>,
+) {
+    for PlayerDamage(dmg) in events.read() {
+        player_query.health = player_query.health.saturating_sub(*dmg);
+    }
+}
+
+pub fn on_bullet_collided(
+    mut commands: Commands,
+    mut events: EventReader<BulletCollided>,
+) {
+    for BulletCollided(bullet_entity) in events.read() {
+        commands.entity(*bullet_entity).despawn();
     }
 }

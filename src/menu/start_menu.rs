@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::AppState;
+use crate::GameState;
 
 #[derive(Component)]
 pub struct StartScreenElement;
@@ -11,7 +11,6 @@ pub fn setup_start_screen(
     commands.spawn((
         Text::new("Use WASD to move and Mouse to shoot.\nUse mouse wheel (on desktop) or Z ans X for camera zoom.\nPress Enter to start."),
         TextLayout::new_with_justify(JustifyText::Center),
-        //Outline::new(Val::Px(5.), Val::Px(5.), BLACK.into()),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Percent(50.0),
@@ -32,6 +31,6 @@ pub fn handle_start_game(
         for entity in &query {
             commands.entity(entity).despawn();
         }
-        commands.set_state(AppState::InGame);
+        commands.set_state(GameState::InGame);
     }
 }

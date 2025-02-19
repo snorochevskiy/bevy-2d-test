@@ -1,11 +1,11 @@
-use std::{collections::HashSet, ops::Range, time::Duration};
+use std::{ops::Range, time::Duration};
 
 use bevy::prelude::*;
 use bevy_rapier2d::prelude::*;
 
-use crate::{animation::{AnimationByDirection, AnimationConfig}, AppState};
+use crate::animation::{AnimationByDirection, AnimationConfig};
 
-use super::{player::PlayerInfo, LevelComponents};
+use super::{player::PlayerInfo, GRP_ENEMY, GRP_ENVIRONMENT, GRP_PLAYER, GRP_PLAYER_BULLET, CollidingObj, LevelComponents};
 
 const TEXTURE_SLIME: &str = "sprites/slime.png";
 
@@ -18,15 +18,6 @@ const ENEMY_SPAWN_INTERVAL: Duration = Duration::from_millis(1000);
 #[derive(Component, PartialEq, Eq)]
 pub enum EnemyState {
     Alive, Dying(Timer)
-}
-
-impl EnemyState {
-    pub fn is_alive(&self) -> bool {
-        match self {
-            EnemyState::Alive => true,
-            _ => false,
-        }
-    }
 }
 
 #[derive(Default, Clone, Resource)]
@@ -43,6 +34,12 @@ pub struct EnemySpawner {
     pub locations: Vec<Vec3>,
     pub timer: Timer,
 }
+
+#[derive(Resource)]
+pub struct SlimeDeathSound(pub Vec<Handle<AudioSource>>);
+
+#[derive(Component)]
+pub struct ActiveSlimeDeathSound;
 
 pub fn setup_enemies(
     mut commands: Commands,
@@ -89,6 +86,13 @@ pub fn setup_enemies(
 
     commands.insert_resource(slime_sprite_spawn_config);
 
+    commands.insert_resource(SlimeDeathSound(vec![
+        asset_server.load("sounds/slime_1.ogg"),
+        asset_server.load("sounds/slime_2.ogg"),
+        asset_server.load("sounds/slime_3.ogg"),
+        asset_server.load("sounds/slime_4.ogg"),
+        asset_server.load("sounds/slime_5.ogg"),
+    ]));
 }
 
 pub fn spawn_enemies(
@@ -112,11 +116,15 @@ pub fn spawn_enemies(
             fps: 10,
             elapsed_frame_timer: AnimationConfig::timer_from_fps(10),
         };
-    
+
         commands.spawn((
             RigidBody::Dynamic,
             GravityScale(0.0),
             Collider::ball(10.0),
+            CollisionGroups::new(
+                GRP_ENEMY,
+                GRP_ENVIRONMENT | GRP_PLAYER | GRP_ENEMY | GRP_PLAYER_BULLET,
+            ),
             Velocity::zero(),
             LockedAxes::ROTATION_LOCKED,
             Sprite {
@@ -131,6 +139,7 @@ pub fn spawn_enemies(
             EnemyState::Alive,
             slime_animation_config,
             LevelComponents,
+            CollidingObj::Enemy { dmg: DAMAGE_SLIME },
         ));
     }
 }
@@ -138,54 +147,19 @@ pub fn spawn_enemies(
 pub fn execute_enemy_behavior(
     mut commands: Commands,
     time: Res<Time>,
-    mut collision_events: EventReader<CollisionEvent>,
-    mut player_query: Query<(Entity, &Transform, &mut PlayerInfo)>,
-    mut enemy_query: Query<(Entity, &mut Transform, &mut Velocity, &mut AnimationConfig, &mut EnemyState), Without<PlayerInfo>>,
+    player_transform: Single<&Transform, With<PlayerInfo>>,
+    mut enemy_query: Query<(Entity, &mut Transform, &mut Velocity, &mut EnemyState), Without<PlayerInfo>>,
 ) {
-    let (player_entity, player_transform, mut player_info) = player_query.single_mut();
-
-    // Collect IDs of enemies collided with the player
-    let mut collided_enemies = HashSet::new();
-    for collision_event in collision_events.read() {
-        if let &CollisionEvent::Started(c1, c2 , _) = collision_event {
-            if c1 == player_entity {
-                collided_enemies.insert(c2);
-            } else if c2 == player_entity {
-                collided_enemies.insert(c1);
-            };
-        }
-    }
-
     // Iterate through enemies
-    for (enemy_entity, mut enemy_transfrom, mut enemy_velocity, mut enemy_anim_config, mut enemy_info) in &mut enemy_query {
-        match enemy_info.as_mut() {
+    for (enemy_entity, mut enemy_transfrom, mut enemy_velocity, mut enemy_state) in &mut enemy_query {
+        match enemy_state.as_mut() {
             EnemyState::Alive => {
-                if collided_enemies.contains(&enemy_entity) {
-                    player_info.health = player_info.health.saturating_sub(DAMAGE_SLIME);
+                let move_vector = (player_transform.translation - enemy_transfrom.translation).normalize();
 
-                    if player_info.health == 0 {
-                        commands.set_state(AppState::End); // TODO: move out?
-                    }
+                enemy_velocity.linvel = move_vector.xy() * SPEED_SLIME;
 
-                    let dying_duration = enemy_anim_config.frame_show_time() * enemy_anim_config.dying.len() as u32;
-                    *enemy_info = EnemyState::Dying(Timer::new(dying_duration, TimerMode::Once));
-                    enemy_anim_config.current_frame_range = enemy_anim_config.dying.clone();
-
-                    commands.entity(enemy_entity).remove::<Collider>();
-                    enemy_velocity.linvel = Vec2::ZERO;
-                } else {
-                    // Do the movement
-                    let move_vector = (player_transform.translation - enemy_transfrom.translation).normalize();
-
-                    // If perform enemy movement manually
-                    //enemy_transfrom.translation += move_vector * time.delta_secs() * SPEED_SLIME;
-
-                    // If perform enemy movement via Rapier physics
-                    enemy_velocity.linvel = move_vector.xy() * SPEED_SLIME * 2.0;
-
-                    // We update Z axis to implement correct sparites overlapping order
-                    enemy_transfrom.translation.z = -(enemy_transfrom.translation.y * 0.01);
-                }
+                // We update Z axis to implement correct sparites overlapping order
+                enemy_transfrom.translation.z = -(enemy_transfrom.translation.y * 0.01);
             },
             EnemyState::Dying(timer) => {
                 timer.tick(time.delta());
@@ -195,4 +169,38 @@ pub fn execute_enemy_behavior(
             },
         };
     }
+}
+
+#[derive(Event)]
+pub struct EnemyReceiveHitEvent(pub Entity);
+
+pub fn start_enemy_dying(
+    mut commands: Commands,
+    mut events: EventReader<EnemyReceiveHitEvent>,
+    time: Res<Time>,
+    sounds: Res<SlimeDeathSound>,
+    mut enemy_query: Query<(Entity, &mut Velocity, &mut AnimationConfig, &mut EnemyState), Without<PlayerInfo>>,
+    mut music_controller: Query<&mut AudioSink, With<ActiveSlimeDeathSound>>,
+) {
+    if events.is_empty() {
+        return;
+    }
+
+    for event in events.read() {
+        if let Ok((enemy_entity, mut enemy_velocity, mut enemy_anim_config, mut enemy_state)) = enemy_query.get_mut(event.0) {
+            let dying_duration = enemy_anim_config.frame_show_time() * enemy_anim_config.dying.len() as u32;
+            *enemy_state = EnemyState::Dying(Timer::new(dying_duration, TimerMode::Once));
+            enemy_anim_config.current_frame_range = enemy_anim_config.dying.clone();
+        
+            commands.entity(enemy_entity).remove::<Collider>();
+            enemy_velocity.linvel = Vec2::ZERO;
+        }
+    }
+
+    for active_sound in &mut music_controller {
+        active_sound.stop();
+    }
+
+    let sound_to_play = sounds.0[time.elapsed_secs() as usize % sounds.0.len()].clone();
+    commands.spawn((AudioPlayer::new(sound_to_play), PlaybackSettings::DESPAWN));
 }
